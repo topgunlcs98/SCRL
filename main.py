@@ -72,12 +72,6 @@ if __name__ == "__main__":
         target_pro_2 = torch.LongTensor(target_pro_2).cuda()
         return pro_1, pro_2, target_pro_1, target_pro_2
        
-    def pro_loss(arr1, arr2, arr3, softmax):
-        arr1 = softmax(arr1)
-        arr2 = softmax(arr2)
-        arr3 = softmax(arr3)
-        return arr1, arr2, arr3
-
     cuda = torch.cuda.is_available()
 
     use_seed = not config.no_seed
@@ -87,15 +81,12 @@ if __name__ == "__main__":
         if cuda:
             torch.cuda.manual_seed(config.seed)
 
-   
     sadj, fadj = load_graph(args.labelrate, config)
     features, labels, idx_train, idx_test, num_labels = load_data(config)
-    # idx_train, idx_val, index_test = load_data_scarce(args.dataset, args.labelrate)
     
 
     model = CGCN(features.shape[1], config.nhid1, config.nhid2, num_labels, 0.5, 3 * num_labels)
     optimizer = optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
-    # optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.1)
 
     if cuda:
         model = model.cuda()
@@ -121,19 +112,14 @@ if __name__ == "__main__":
     T1 = time.time()
     for epoch in range(config.epochs):
         model.train()
+        with torch.no_grad():
+            w = model.prototype.prototype.weight.data.clone()
+            w = F.normalize(w, dim=1, p=2)
+            model.prototype.prototype.weight.copy_(w)
         output1, output2, out = model(features, sadj, fadj)
-        # p1, p2, q1, q2 = process_output(output1[idx_train], output2[idx_train], softmax, config.it)
-        p1, p2, q1, q2 = process_output(output1, output2, softmax, config.it)
+        p1, p2, q1, q2 = process_output(output1[idx_train], output2[idx_train], softmax, config.it)
         
-        # pro_1, pro_2, target_pro_1, target_pro_2 = prototype(p1, p2, idx_train, labels, args.labelrate)
-        # prototype1, prototype2, prototype3 = pro_loss(pro_1, pro_2, p_out, softmax)
-        # pro_pout = p_out
-        
-        # prototype_loss = -1 * (F.nll_loss(pro_pout, target_pro_1) + F.nll_loss(pro_pout, target_pro_2))
-        # prototype_loss = -0 * (torch.mean(torch.sum(pro_1 * torch.log(pro_pout))) + torch.mean(torch.sum(pro_2 * torch.log(pro_pout))))
-        # prototype_loss = F.nll_loss(pro_pout, target_pro_1) + F.nll_loss(pro_pout, target_pro_2)
-        # prototype_loss = -0.3 * (torch.mean(torch.sum(prototype3 * torch.log(prototype1), dim=1)) + torch.mean(torch.sum(prototype3 * torch.log(prototype2), dim=1)))
-        prototype_loss = 0
+
         loss_con = -1* config.alpha * (torch.mean(torch.sum(q1 * torch.log(p2), dim=1))+torch.mean(torch.sum(q2 * torch.log(p1), dim=1))) / 2
         loss_class = F.nll_loss(out[idx_train], label[idx_train])
         loss = loss_con + loss_class 
@@ -144,10 +130,7 @@ if __name__ == "__main__":
 
         model.eval()
         output1, output2, out = model(features, sadj, fadj)
-        # p1, p2, q1, q2 = process_output(output1[idx_test], output2[idx_test], softmax, config.it)
         p1, p2, q1, q2 = process_output(output1, output2, softmax, config.it)
-        # o_l = 0.5*(logsoftmax(output1 / temperature2) + logsoftmax(output2 / temperature2))
-        # o_l = 1*logsoftmax(output1/temperature2) + 0 * logsoftmax(output2/temperature2)
         acc_test = accuracy(out[idx_test], label[idx_test])
         loss_class_eval = F.nll_loss(out[idx_test], label[idx_test])
         loss_test = loss_class_eval + loss_con
@@ -168,7 +151,6 @@ if __name__ == "__main__":
             print('e:{}'.format(epoch),
                     'l_pred:{:.4f}'.format(loss_class),
                     'l_con:{:.4f}'.format(loss_con),
-                    # 'l_pro:{:.4f}'.format(prototype_loss),
                     'ltr: {:.4f}'.format(loss.item()),
                     'atr: {:.4f}'.format(acc_train.item()),
                     'ate: {:.4f}'.format(acc_test.item()),
